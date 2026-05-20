@@ -1,0 +1,227 @@
+# =========================================
+# IMPORTS
+# =========================================
+import numpy as np
+import librosa
+import json
+
+from tensorflow.keras.models import load_model
+
+from collections import Counter
+
+from scipy.fftpack import dct
+
+# =========================================
+# CONFIGURATION
+# =========================================
+SAMPLE_RATE = 22050
+
+WINDOW_SIZE = 3.5
+HOP_SIZE = 1.75
+
+N_LFCC = 20
+MAX_LEN = 150
+
+LABEL_MAP = {
+    0: "pain",
+    1: "hunger",
+    2: "discomfort"
+}
+
+# =========================================
+# LOAD MODEL
+# =========================================
+model = load_model("lfcc_model.h5")
+
+with open("accuracy.json", "r") as f:
+
+    accuracy = json.load(f)
+
+print("\n===================================")
+print("MODEL PERFORMANCE")
+print("===================================")
+
+print(f"Training Accuracy   : {accuracy['train_accuracy']:.4f}")
+
+print(f"Validation Accuracy : {accuracy['validation_accuracy']:.4f}")
+
+print(f"Testing Accuracy    : {accuracy['test_accuracy']:.4f}")
+
+# =========================================
+# PAD / TRUNCATE
+# =========================================
+def pad_or_truncate(feature, max_len=MAX_LEN):
+
+    if feature.shape[1] < max_len:
+
+        pad_width = max_len - feature.shape[1]
+
+        feature = np.pad(
+            feature,
+            ((0,0),(0,pad_width)),
+            mode='constant'
+        )
+
+    else:
+
+        feature = feature[:, :max_len]
+
+    return feature
+
+# =========================================
+# LFCC EXTRACTION
+# =========================================
+def extract_lfcc(signal, sr):
+
+    stft = np.abs(
+        librosa.stft(
+            signal,
+            n_fft=2048,
+            hop_length=512
+        )
+    )
+
+    log_spectrogram = np.log(
+        stft + 1e-6
+    )
+
+    lfcc = dct(
+        log_spectrogram,
+        type=2,
+        axis=0,
+        norm='ortho'
+    )[:N_LFCC]
+
+    lfcc = pad_or_truncate(
+        lfcc,
+        MAX_LEN
+    )
+
+    lfcc = (
+        lfcc - np.mean(lfcc)
+    ) / (
+        np.std(lfcc) + 1e-6
+    )
+
+    lfcc = np.expand_dims(
+        lfcc,
+        axis=-1
+    )
+
+    return lfcc
+
+# =========================================
+# WINDOWING
+# =========================================
+def split_windows(signal, sr):
+
+    window_length = int(WINDOW_SIZE * sr)
+
+    hop_length = int(HOP_SIZE * sr)
+
+    windows = []
+
+    for start in range(
+        0,
+        len(signal) - window_length + 1,
+        hop_length
+    ):
+
+        end = start + window_length
+
+        windows.append(signal[start:end])
+
+    return windows
+
+# =========================================
+# PREDICTION FUNCTION
+# =========================================
+def predict_audio(file_path):
+
+    try:
+
+        signal, sr = librosa.load(
+            file_path,
+            sr=SAMPLE_RATE
+        )
+
+        windows = split_windows(signal, sr)
+
+        if len(windows) == 0:
+
+            print("Audio too short. Padding applied.")
+
+            pad_length = int(
+                WINDOW_SIZE * sr
+            )
+
+            signal = np.pad(
+                signal,
+                (0, pad_length - len(signal))
+            )
+
+            windows = [signal]
+
+        predictions = []
+
+        for window in windows:
+
+            features = extract_lfcc(
+                window,
+                sr
+            )
+
+            features = np.expand_dims(
+                features,
+                axis=0
+            )
+
+            prediction = model.predict(
+                features,
+                verbose=0
+            )
+
+            confidence = np.max(prediction)
+
+            if confidence > 0.5:
+
+                predicted_class = np.argmax(
+                    prediction
+                )
+
+                predictions.append(
+                    predicted_class
+                )
+
+        if len(predictions) == 0:
+
+            print("\nLow confidence prediction.")
+
+            return
+
+        final_class = Counter(
+            predictions
+        ).most_common(1)[0][0]
+
+        print("\nWindow Predictions:")
+
+        print(
+            [LABEL_MAP[p] for p in predictions]
+        )
+
+        print("\nFinal Prediction:")
+
+        print(LABEL_MAP[final_class])
+
+    except Exception as e:
+
+        print("Error:", e)
+
+# =========================================
+# USER INPUT
+# =========================================
+file_path = input(
+    "\nEnter path of audio file: "
+)
+
+predict_audio(file_path)

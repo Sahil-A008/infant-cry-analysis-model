@@ -1,0 +1,257 @@
+# =========================================
+# IMPORTS
+# =========================================
+import os
+import numpy as np
+import librosa
+from scipy.fftpack import dct
+
+# =========================================
+# CONFIGURATION
+# =========================================
+DATASET_PATH = "F:\\Project\\Final Dataset - Copy"
+
+SAMPLE_RATE = 22050
+DURATION = 7
+
+WINDOW_SIZE = 3.5
+HOP_SIZE = 1.75
+
+N_LFCC = 20
+MAX_LEN = 150
+
+# =========================================
+# LABEL MAP
+# =========================================
+LABELS = {
+    "pain": 0,
+    "hunger": 1,
+    "discomfort": 2
+}
+
+# =========================================
+# DATA AUGMENTATION
+# =========================================
+def add_noise(signal, noise_factor=0.005):
+
+    noise = np.random.randn(len(signal))
+
+    return signal + noise_factor * noise
+
+def pitch_shift(signal, sr, n_steps=2):
+
+    return librosa.effects.pitch_shift(
+        signal,
+        sr=sr,
+        n_steps=n_steps
+    )
+
+def time_stretch_fixed(signal, rate=1.1):
+
+    stretched = librosa.effects.time_stretch(
+        signal,
+        rate=rate
+    )
+
+    if len(stretched) > len(signal):
+
+        stretched = stretched[:len(signal)]
+
+    else:
+
+        stretched = np.pad(
+            stretched,
+            (0, len(signal) - len(stretched))
+        )
+
+    return stretched
+
+def augment_signal(signal, sr):
+
+    augmented = []
+
+    augmented.append(signal)
+
+    augmented.append(
+        add_noise(signal)
+    )
+
+    augmented.append(
+        pitch_shift(signal, sr)
+    )
+
+    try:
+        augmented.append(
+            time_stretch_fixed(signal)
+        )
+
+    except:
+        pass
+
+    return augmented
+
+# =========================================
+# PAD / TRUNCATE
+# =========================================
+def pad_or_truncate(feature, max_len=MAX_LEN):
+
+    if feature.shape[1] < max_len:
+
+        pad_width = max_len - feature.shape[1]
+
+        feature = np.pad(
+            feature,
+            ((0,0),(0,pad_width)),
+            mode='constant'
+        )
+
+    else:
+
+        feature = feature[:, :max_len]
+
+    return feature
+
+# =========================================
+# LFCC EXTRACTION
+# =========================================
+def extract_lfcc(signal, sr):
+
+    stft = np.abs(
+        librosa.stft(
+            signal,
+            n_fft=2048,
+            hop_length=512
+        )
+    )
+
+    log_spectrogram = np.log(
+        stft + 1e-6
+    )
+
+    lfcc = dct(
+        log_spectrogram,
+        type=2,
+        axis=0,
+        norm='ortho'
+    )[:N_LFCC]
+
+    lfcc = pad_or_truncate(
+        lfcc,
+        MAX_LEN
+    )
+
+    return lfcc
+
+# =========================================
+# WINDOWING
+# =========================================
+def split_windows(signal, sr):
+
+    window_length = int(WINDOW_SIZE * sr)
+
+    hop_length = int(HOP_SIZE * sr)
+
+    windows = []
+
+    for start in range(
+        0,
+        len(signal) - window_length + 1,
+        hop_length
+    ):
+
+        end = start + window_length
+
+        windows.append(signal[start:end])
+
+    return windows
+
+# =========================================
+# MAIN PROCESSING
+# =========================================
+X = []
+y = []
+
+for label_name in LABELS:
+
+    folder_path = os.path.join(
+        DATASET_PATH,
+        label_name
+    )
+
+    print(f"Processing class: {label_name}")
+
+    for file in os.listdir(folder_path):
+
+        file_path = os.path.join(
+            folder_path,
+            file
+        )
+
+        try:
+
+            signal, sr = librosa.load(
+                file_path,
+                sr=SAMPLE_RATE
+            )
+
+            max_length = SAMPLE_RATE * DURATION
+
+            if len(signal) < max_length:
+
+                signal = np.pad(
+                    signal,
+                    (0, max_length - len(signal))
+                )
+
+            else:
+
+                signal = signal[:max_length]
+
+            windows = split_windows(signal, sr)
+
+            for window in windows:
+
+                augmented_signals = augment_signal(
+                    window,
+                    sr
+                )
+
+                for aug_signal in augmented_signals:
+
+                    features = extract_lfcc(
+                        aug_signal,
+                        sr
+                    )
+
+                    features = (
+                        features - np.mean(features)
+                    ) / (
+                        np.std(features) + 1e-6
+                    )
+
+                    features = np.expand_dims(
+                        features,
+                        axis=-1
+                    )
+
+                    X.append(features)
+
+                    y.append(
+                        LABELS[label_name]
+                    )
+
+        except Exception as e:
+
+            print(
+                f"Error processing {file_path}: {e}"
+            )
+
+X = np.array(X)
+y = np.array(y)
+
+print("\nFinal Dataset Shape:", X.shape)
+
+np.save("X.npy", X)
+np.save("y.npy", y)
+
+print("\nLFCC Dataset Saved Successfully")

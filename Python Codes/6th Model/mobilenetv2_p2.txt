@@ -1,0 +1,163 @@
+import os
+import json
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras import layers, models
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import train_test_split
+
+# ---------------- SETTINGS ---------------- #
+DATASET_PATH = "F:\\Project\\anew specto\\finalrepresentation\\cnn_ready\\newset"
+
+IMG_SIZE = (224, 224)
+BATCH_SIZE = 16
+EPOCHS = 25
+
+# ---------------- DATA GENERATOR ---------------- #
+datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.3,
+
+    # augmentation only for training
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    zoom_range=0.1,
+    brightness_range=[0.8, 1.2]
+)
+
+# ---------------- TRAIN DATA ---------------- #
+train_generator = datagen.flow_from_directory(
+    DATASET_PATH,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    subset='training',
+    shuffle=True
+)
+
+# ---------------- TEMP DATA (VAL + TEST) ---------------- #
+temp_generator = datagen.flow_from_directory(
+    DATASET_PATH,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=False
+)
+
+# ---------------- LOAD FULL TEMP DATA ---------------- #
+temp_images = []
+temp_labels = []
+
+for i in range(len(temp_generator)):
+    images, labels = temp_generator[i]
+    temp_images.append(images)
+    temp_labels.append(labels)
+
+temp_images = np.concatenate(temp_images)
+temp_labels = np.concatenate(temp_labels)
+
+# ---------------- SPLIT VAL + TEST ---------------- #
+val_images, test_images, val_labels, test_labels = train_test_split(
+    temp_images,
+    temp_labels,
+    test_size=0.33,   # 20% val, 10% test overall
+    random_state=42,
+    stratify=temp_labels.argmax(axis=1)
+)
+
+print("\nValidation Images:", len(val_images))
+print("Testing Images:", len(test_images))
+
+# ---------------- CLASS WEIGHTS ---------------- #
+labels = train_generator.classes
+
+class_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(labels),
+    y=labels
+)
+
+class_weights_dict = dict(enumerate(class_weights))
+
+print("\nClass Weights:")
+print(class_weights_dict)
+
+# ---------------- MODEL ---------------- #
+base_model = MobileNetV2(
+    input_shape=(224, 224, 3),
+    include_top=False,
+    weights='imagenet'
+)
+
+base_model.trainable = False
+
+model = models.Sequential([
+    base_model,
+
+    layers.GlobalAveragePooling2D(),
+
+    layers.Dense(128, activation='relu'),
+
+    layers.Dropout(0.5),
+
+    layers.Dense(3, activation='softmax')
+])
+
+# ---------------- COMPILE ---------------- #
+model.compile(
+    optimizer='adam',
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+model.summary()
+
+# ---------------- TRAIN ---------------- #
+history = model.fit(
+    train_generator,
+    epochs=EPOCHS,
+    validation_data=(val_images, val_labels),
+    class_weight=class_weights_dict
+)
+
+# ---------------- EVALUATION ---------------- #
+train_loss, train_acc = model.evaluate(train_generator)
+
+val_loss, val_acc = model.evaluate(val_images, val_labels)
+
+test_loss, test_acc = model.evaluate(test_images, test_labels)
+
+# ---------------- PRINT RESULTS ---------------- #
+print("\n========== FINAL ACCURACY ==========")
+
+print(f"Training Accuracy   : {train_acc:.4f}")
+
+print(f"Validation Accuracy : {val_acc:.4f}")
+
+print(f"Testing Accuracy    : {test_acc:.4f}")
+
+# ---------------- SAVE MODEL ---------------- #
+model.save("btechpcnnspec.h5")
+
+print("\n Model saved as btechpcnnspec.h5")
+
+# ---------------- SAVE ACCURACY VALUES ---------------- #
+np.savez(
+    "model_accuracies.npz",
+    train_acc=train_acc,
+    val_acc=val_acc,
+    test_acc=test_acc
+)
+
+print(" Accuracy values saved as model_accuracies.npz")
+
+# ---------------- SAVE CLASS NAMES ---------------- #
+class_names = train_generator.class_indices
+
+with open("class_names.json", "w") as f:
+    json.dump(class_names, f)
+
+print(" Class names saved")

@@ -1,0 +1,212 @@
+import os
+import json
+import numpy as np
+import tensorflow as tf
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing import image
+
+# =========================================================
+# SETTINGS
+# =========================================================
+MODEL_PATH = "btechpcnnspec.h5"
+ACCURACY_FILE = "model_accuracies.npz"
+CLASS_FILE = "class_names.json"
+
+IMG_SIZE = (224, 224)
+
+# =========================================================
+# LOAD MODEL
+# =========================================================
+print("\nLoading trained model...")
+
+model = tf.keras.models.load_model(MODEL_PATH)
+
+print("✅ Model Loaded Successfully")
+
+# =========================================================
+# LOAD ACCURACY VALUES
+# =========================================================
+if os.path.exists(ACCURACY_FILE):
+
+    acc = np.load(ACCURACY_FILE)
+
+    print("\n========== MODEL ACCURACY ==========")
+
+    print(f"Training Accuracy   : {acc['train_acc']:.4f}")
+
+    print(f"Validation Accuracy : {acc['val_acc']:.4f}")
+
+    print(f"Testing Accuracy    : {acc['test_acc']:.4f}")
+
+else:
+    print("\n⚠ Accuracy file not found")
+
+# =========================================================
+# LOAD CLASS NAMES
+# =========================================================
+with open(CLASS_FILE, "r") as f:
+    class_indices = json.load(f)
+
+# Reverse dictionary
+class_names = {v: k for k, v in class_indices.items()}
+
+print("\nDetected Classes:")
+print(class_names)
+
+# =========================================================
+# FUNCTION : CREATE SPECTROGRAM FROM AUDIO
+# =========================================================
+def create_spectrogram(audio_path, save_path="temp_spectrogram.png"):
+
+    try:
+        # Load audio
+        y, sr = librosa.load(audio_path, sr=22050)
+
+        # Create Mel Spectrogram
+        mel_spec = librosa.feature.melspectrogram(
+            y=y,
+            sr=sr,
+            n_mels=128
+        )
+
+        # Convert to dB
+        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+
+        # Plot spectrogram
+        plt.figure(figsize=(2.24, 2.24))
+
+        librosa.display.specshow(
+            mel_spec_db,
+            sr=sr,
+            cmap='magma'
+        )
+
+        plt.axis('off')
+
+        # Remove padding
+        plt.tight_layout(pad=0)
+
+        # Save image
+        plt.savefig(
+            save_path,
+            bbox_inches='tight',
+            pad_inches=0
+        )
+
+        plt.close()
+
+        return save_path
+
+    except Exception as e:
+        print("\nError creating spectrogram:", e)
+        return None
+
+# =========================================================
+# FUNCTION : PREPROCESS IMAGE
+# =========================================================
+def preprocess_image(img_path):
+
+    img = image.load_img(
+        img_path,
+        target_size=IMG_SIZE
+    )
+
+    img_array = image.img_to_array(img)
+
+    img_array = img_array / 255.0
+
+    img_array = np.expand_dims(img_array, axis=0)
+
+    return img_array
+
+# =========================================================
+# FUNCTION : PREDICT
+# =========================================================
+def predict_cry(input_path):
+
+    # Check file exists
+    if not os.path.exists(input_path):
+        print("\n❌ File not found")
+        return
+
+    # =====================================================
+    # IF INPUT IS AUDIO FILE
+    # =====================================================
+    if input_path.lower().endswith(".wav"):
+
+        print("\nAudio file detected")
+
+        spectrogram_path = create_spectrogram(input_path)
+
+        if spectrogram_path is None:
+            return
+
+        img_path = spectrogram_path
+
+    # =====================================================
+    # IF INPUT IS IMAGE FILE
+    # =====================================================
+    elif input_path.lower().endswith((".png", ".jpg", ".jpeg")):
+
+        print("\nSpectrogram image detected")
+
+        img_path = input_path
+
+    else:
+        print("\n❌ Unsupported file format")
+        return
+
+    # =====================================================
+    # PREPROCESS IMAGE
+    # =====================================================
+    processed_image = preprocess_image(img_path)
+
+    # =====================================================
+    # PREDICTION
+    # =====================================================
+    prediction = model.predict(processed_image)
+
+    predicted_index = np.argmax(prediction)
+
+    predicted_class = class_names[predicted_index]
+
+    confidence = np.max(prediction) * 100
+
+    # =====================================================
+    # PRINT RESULT
+    # =====================================================
+    print("\n========== PREDICTION RESULT ==========")
+
+    print(f"Predicted Cry Type : {predicted_class}")
+
+    print(f"Confidence         : {confidence:.2f}%")
+
+    print("\nClass Probabilities:")
+
+    for i, prob in enumerate(prediction[0]):
+
+        print(f"{class_names[i]} : {prob*100:.2f}%")
+
+# =========================================================
+# MAIN LOOP
+# =========================================================
+while True:
+
+    print("\n====================================")
+    print(" Infant Cry Analysis System ")
+    print("====================================")
+
+    print("\nEnter:")
+    print("1. WAV audio file")
+    print("2. Spectrogram image")
+    print("3. Type 'exit' to quit")
+
+    file_path = input("\nEnter file path: ")
+
+    if file_path.lower() == "exit":
+        print("\nProgram Closed")
+        break
+
+    predict_cry(file_path)

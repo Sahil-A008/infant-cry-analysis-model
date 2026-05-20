@@ -1,0 +1,93 @@
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from PIL import Image
+
+# -------------------- INPUT / OUTPUT -------------------- #
+input_main_folder = "F:\\Project\\Final Dataset"
+output_main_folder = "F:\\Project\\anew specto\\finalrepresentation"
+
+high_res_folder = os.path.join(output_main_folder, "high_res")
+cnn_folder = os.path.join(output_main_folder, "cnn_ready")
+
+classes = ["pain", "hunger", "discomfort"]
+
+# Create folders
+for cls in classes:
+    os.makedirs(os.path.join(high_res_folder, cls), exist_ok=True)
+    os.makedirs(os.path.join(cnn_folder, cls), exist_ok=True)
+
+print(" Processing started...")
+
+# -------------------- LOOP -------------------- #
+for cls in classes:
+
+    input_folder = os.path.join(input_main_folder, cls)
+    high_res_output = os.path.join(high_res_folder, cls)
+    cnn_output = os.path.join(cnn_folder, cls)
+
+    if not os.path.exists(input_folder):
+        print(f" Folder not found: {input_folder}")
+        continue
+
+    files = os.listdir(input_folder)
+    print(f"\n🔍 {cls.upper()} → {len(files)} files found")
+
+    for file_name in files:
+
+        if not file_name.lower().endswith(".wav"):
+            continue
+
+        file_path = os.path.join(input_folder, file_name)
+        save_name = file_name.replace(".wav", ".png")
+
+        high_res_path = os.path.join(high_res_output, save_name)
+        cnn_path = os.path.join(cnn_output, save_name)
+
+        try:
+            # -------------------- LOAD AUDIO -------------------- #
+            y, sr = librosa.load(file_path, sr=None)
+
+            if len(y) == 0:
+                print(f"⚠ Skipped empty: {file_name}")
+                continue
+
+            # Normalize audio
+            y = librosa.util.normalize(y)
+
+            # -------------------- STFT -------------------- #
+            S = librosa.stft(y, n_fft=2048, hop_length=512)
+            S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
+
+            # -------------------- PERFECT BORDERLESS FIGURE -------------------- #
+            fig = plt.figure(figsize=(10, 6), dpi=300, frameon=False)
+
+            ax = plt.Axes(fig, [0., 0., 1., 1.])  # FULL canvas
+            ax.set_axis_off()
+            fig.add_axes(ax)
+
+            librosa.display.specshow(
+                S_db,
+                sr=sr,
+                hop_length=512,
+                cmap='jet',
+                y_axis='log'
+            )
+
+            # Save WITHOUT any padding or border
+            fig.savefig(high_res_path, dpi=300)
+            plt.close(fig)
+
+            # -------------------- CNN READY (224x224) -------------------- #
+            img = Image.open(high_res_path)
+            img = img.resize((224, 224))
+            img.save(cnn_path)
+
+        except Exception as e:
+            print(f" Error in {file_name}: {e}")
+
+print("\n DONE! Borderless spectrograms generated.")
+print(" High-res:", high_res_folder)
+print(" CNN-ready:", cnn_folder)

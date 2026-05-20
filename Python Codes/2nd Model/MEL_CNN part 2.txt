@@ -1,0 +1,196 @@
+# =========================================
+# IMPORTS
+# =========================================
+import numpy as np
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import os
+import json
+
+MODEL_FOLDER = "SavedModel"
+
+ACCURACY_PATH = os.path.join(
+    MODEL_FOLDER,
+    "model_accuracies.json"
+)
+
+print("\n===================================")
+print("MODEL ACCURACY VALUES")
+print("===================================")
+
+with open(ACCURACY_PATH, "r") as f:
+
+    accuracy_data = json.load(f)
+
+print(
+    f"Training Accuracy   : "
+    f"{accuracy_data['training_accuracy']:.2f}%"
+)
+
+print(
+    f"Validation Accuracy : "
+    f"{accuracy_data['validation_accuracy']:.2f}%"
+)
+
+print(
+    f"Testing Accuracy    : "
+    f"{accuracy_data['testing_accuracy']:.2f}%"
+)
+
+IMG_SIZE = 224
+SAMPLE_RATE = 22050
+DURATION = 7
+
+# =========================================
+# LOAD MODEL
+# =========================================
+MODEL_PATH = os.path.join(
+    MODEL_FOLDER,
+    "mscm.keras"
+)
+
+model = tf.keras.models.load_model(
+    MODEL_PATH
+)
+
+# Optional (removes warning)
+model.compile(
+    optimizer='adam',
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+classes = ["pain", "hunger", "discomfort"]
+
+# =========================================
+# CREATE MEL SPECTROGRAM
+# =========================================
+def create_mel(file_path):
+    try:
+        signal, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+
+        # Fix length (7 sec)
+        signal = signal[:SAMPLE_RATE * DURATION]
+
+        if len(signal) < SAMPLE_RATE * DURATION:
+            signal = np.pad(
+                signal,
+                (0, SAMPLE_RATE * DURATION - len(signal))
+            )
+
+        mel = librosa.feature.melspectrogram(
+            y=signal,
+            sr=sr,
+            n_mels=128,
+            fmax=8000
+        )
+
+        mel_db = librosa.power_to_db(
+            mel,
+            ref=np.max
+        )
+
+        plt.figure(figsize=(4,4))
+
+        librosa.display.specshow(
+            mel_db,
+            sr=sr
+        )
+
+        plt.axis('off')
+
+        temp_path = "temp.png"
+
+        plt.savefig(
+            temp_path,
+            bbox_inches='tight',
+            pad_inches=0
+        )
+
+        plt.close()
+
+        return temp_path
+
+    except Exception as e:
+        print(f"Error creating mel spectrogram: {e}")
+        return None
+
+# =========================================
+# PREDICT FROM IMAGE
+# =========================================
+def predict_image(img_path):
+
+    img = tf.keras.preprocessing.image.load_img(
+        img_path,
+        target_size=(IMG_SIZE, IMG_SIZE)
+    )
+
+    img = tf.keras.preprocessing.image.img_to_array(img)
+
+    img = img / 255.0
+
+    img = np.expand_dims(img, axis=0)
+
+    prediction = model.predict(img)
+
+    predicted_class = classes[np.argmax(prediction)]
+
+    confidence = np.max(prediction) * 100
+
+    print(f"\n Prediction: {predicted_class}")
+    print(f" Confidence: {confidence:.2f}%")
+
+# =========================================
+# MAIN PREDICTION FUNCTION
+# =========================================
+def predict_input(file_path):
+
+    if not os.path.exists(file_path):
+        print(" File not found. Check path.")
+        return
+
+    extension = os.path.splitext(file_path)[1].lower()
+
+    # =====================================
+    # AUDIO INPUT
+    # =====================================
+    if extension in [".wav", ".mp3", ".flac"]:
+
+        print("\n Audio detected")
+        print("Creating Mel Spectrogram...")
+
+        mel_path = create_mel(file_path)
+
+        if mel_path is None:
+            return
+
+        predict_image(mel_path)
+
+    # =====================================
+    # MEL SPECTROGRAM IMAGE INPUT
+    # =====================================
+    elif extension in [".png", ".jpg", ".jpeg"]:
+
+        print("\n Mel Spectrogram image detected")
+
+        predict_image(file_path)
+
+    else:
+        print(" Unsupported file format")
+
+# =========================================
+# USER INPUT LOOP
+# =========================================
+while True:
+
+    file_path = input(
+        "\nEnter audio OR mel spectrogram image path (or type 'exit'): "
+    )
+
+    if file_path.lower() == "exit":
+        print("Exiting...")
+        break
+
+    predict_input(file_path)

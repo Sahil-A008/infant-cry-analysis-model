@@ -1,0 +1,262 @@
+# =========================================
+# IMPORTS
+# =========================================
+import os
+import numpy as np
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from tensorflow.keras import layers, models
+import json
+# =========================================
+# PATHS (CHANGE THESE)
+# =========================================
+DATASET_PATH = "F:\\Project\\Final Dataset"  
+# Structure:
+# Audio/
+#   pain/
+#   hunger/
+#   discomfort/
+
+SPECTROGRAM_PATH = "F:\\Project\\07melspectrogram\\prevoius model"
+
+IMG_SIZE = 224
+SAMPLE_RATE = 22050
+DURATION = 7  # seconds
+
+# =========================================
+# CREATE MEL SPECTROGRAM (FIXED)
+# =========================================
+def create_mel_spectrogram(file_path, save_path):
+    try:
+        signal, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+
+        # Fix length to 7 sec
+        signal = signal[:SAMPLE_RATE * DURATION]
+        if len(signal) < SAMPLE_RATE * DURATION:
+            padding = SAMPLE_RATE * DURATION - len(signal)
+            signal = np.pad(signal, (0, padding))
+
+        #  FIXED LINE (keyword arguments)
+        mel = librosa.feature.melspectrogram(
+            y=signal,
+            sr=sr,
+            n_mels=128,
+            fmax=8000
+        )
+
+        mel_db = librosa.power_to_db(mel, ref=np.max)
+
+        plt.figure(figsize=(4,4))
+        librosa.display.specshow(mel_db, sr=sr)
+        plt.axis('off')
+
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+
+# =========================================
+# GENERATE SPECTROGRAM DATASET
+# =========================================
+def generate_spectrograms():
+    classes = ["pain", "hunger", "discomfort"]
+
+    for cls in classes:
+        input_folder = os.path.join(DATASET_PATH, cls)
+        output_folder = os.path.join(SPECTROGRAM_PATH, cls)
+
+        os.makedirs(output_folder, exist_ok=True)
+
+        for file in os.listdir(input_folder):
+            if file.endswith(".wav"):
+                file_path = os.path.join(input_folder, file)
+                save_path = os.path.join(output_folder, file.replace(".wav", ".png"))
+
+                create_mel_spectrogram(file_path, save_path)
+
+    print("Mel Spectrograms Generated!")
+
+# =========================================
+# LOAD DATA
+# =========================================
+def load_data():
+    X = []
+    y = []
+    classes = ["pain", "hunger", "discomfort"]
+
+    for label, cls in enumerate(classes):
+        folder = os.path.join(SPECTROGRAM_PATH, cls)
+
+        for file in os.listdir(folder):
+            img_path = os.path.join(folder, file)
+
+            img = tf.keras.preprocessing.image.load_img(
+                img_path, target_size=(IMG_SIZE, IMG_SIZE)
+            )
+            img = tf.keras.preprocessing.image.img_to_array(img) / 255.0
+
+            X.append(img)
+            y.append(label)
+
+    return np.array(X), np.array(y)
+
+# =========================================
+# BUILD CNN MODEL
+# =========================================
+def build_model():
+    model = models.Sequential([
+        layers.Conv2D(32, (3,3), activation='relu', input_shape=(IMG_SIZE, IMG_SIZE, 3)),
+        layers.MaxPooling2D(2,2),
+
+        layers.Conv2D(64, (3,3), activation='relu'),
+        layers.MaxPooling2D(2,2),
+
+        layers.Conv2D(128, (3,3), activation='relu'),
+        layers.MaxPooling2D(2,2),
+
+        layers.Flatten(),
+
+        layers.Dense(128, activation='relu'),
+        layers.Dropout(0.5),
+
+        layers.Dense(3, activation='softmax')
+    ])
+
+    model.compile(
+        optimizer='adam',
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+
+    return model
+
+# =========================================
+# MAIN PIPELINE
+# =========================================
+generate_spectrograms()
+
+X, y = load_data()
+
+# Split (10% test)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.1, stratify=y, random_state=42
+)
+
+# Validation split
+X_train, X_val, y_train, y_val = train_test_split(
+    X_train, y_train, test_size=0.1, stratify=y_train
+)
+
+model = build_model()
+
+# =========================================
+# TRAINING
+# =========================================
+history = model.fit(
+    X_train, y_train,
+    epochs=30,
+    batch_size=16,
+    validation_data=(X_val, y_val)
+)
+
+# =========================================
+# EVALUATION
+# =========================================
+train_loss, train_acc = model.evaluate(X_train, y_train)
+val_loss, val_acc = model.evaluate(X_val, y_val)
+test_loss, test_acc = model.evaluate(X_test, y_test)
+
+print("\n===== FINAL RESULTS =====")
+print(f"Training Accuracy: {train_acc:.4f}")
+print(f"Validation Accuracy: {val_acc:.4f}")
+print(f"Testing Accuracy: {test_acc:.4f}")
+
+# =========================================
+# SAVE MODEL
+# =========================================
+# =========================================
+# SAVE MODEL
+# =========================================
+
+MODEL_FOLDER = "SavedModel"
+
+os.makedirs(MODEL_FOLDER, exist_ok=True)
+
+# -------------------------------------------------
+# SAVE MODEL
+# -------------------------------------------------
+
+MODEL_PATH = os.path.join(
+    MODEL_FOLDER,
+    "mscm.keras"
+)
+
+model.save(MODEL_PATH)
+
+print("\nModel Saved Successfully")
+
+print(MODEL_PATH)
+
+# =========================================
+# SAVE ACCURACY VALUES
+# =========================================
+
+accuracy_data = {
+
+    "training_accuracy": float(
+        train_acc * 100
+    ),
+
+    "validation_accuracy": float(
+        val_acc * 100
+    ),
+
+    "testing_accuracy": float(
+        test_acc * 100
+    ),
+
+    "image_size": IMG_SIZE,
+
+    "epochs": 30,
+
+    "batch_size": 16,
+
+    "classes": [
+        "pain",
+        "hunger",
+        "discomfort"
+    ]
+}
+
+ACCURACY_PATH = os.path.join(
+    MODEL_FOLDER,
+    "model_accuracies.json"
+)
+
+with open(
+    ACCURACY_PATH,
+    "w"
+) as f:
+
+    json.dump(
+        accuracy_data,
+        f,
+        indent=4
+    )
+
+print("\nAccuracy Values Saved")
+
+print(ACCURACY_PATH)
+
+# =========================================
+# PLOT GRAPH
+# =========================================
+plt.plot(history.history['accuracy'], label='Train Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.legend()
+plt.title("Training vs Validation Accuracy")
+plt.show()

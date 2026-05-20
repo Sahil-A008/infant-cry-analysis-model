@@ -1,0 +1,115 @@
+import numpy as np
+import librosa
+import json
+from tensorflow.keras.models import load_model
+from collections import Counter
+
+# ==============================
+# CONFIG (MUST MATCH CODE1)
+# ==============================
+SAMPLE_RATE = 22050
+WINDOW_SIZE = 3.5
+HOP_SIZE = 1.75
+N_MFCC = 20
+MAX_LEN = 150
+
+LABEL_MAP = {
+    0: "pain",
+    1: "hunger",
+    2: "discomfort"
+}
+
+# ==============================
+# LOAD MODEL + ACCURACY
+# ==============================
+model = load_model("infant_cry_model.h5")
+
+with open("accuracy.json", "r") as f:
+    acc = json.load(f)
+
+print("Model Performance:")
+print(f"Training Accuracy: {acc['train_accuracy']:.4f}")
+print(f"Validation Accuracy: {acc['validation_accuracy']:.4f}")
+print(f"Test Accuracy: {acc['test_accuracy']:.4f}")
+
+# ==============================
+# PAD/TRUNCATE
+# ==============================
+def pad_or_truncate(feature, max_len=MAX_LEN):
+    if feature.shape[1] < max_len:
+        pad_width = max_len - feature.shape[1]
+        feature = np.pad(feature, ((0, 0), (0, pad_width)), mode='constant')
+    else:
+        feature = feature[:, :max_len]
+    return feature
+
+# ==============================
+# MFCC FEATURE EXTRACTION
+# ==============================
+def extract_features(signal, sr):
+    mfcc = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=N_MFCC)
+    mfcc = pad_or_truncate(mfcc, MAX_LEN)
+    
+    # Normalize (same as Code1)
+    mfcc = (mfcc - np.mean(mfcc)) / (np.std(mfcc) + 1e-6)
+    
+    mfcc = np.expand_dims(mfcc, axis=-1)
+    
+    return mfcc
+
+# ==============================
+# WINDOWING
+# ==============================
+def split_windows(signal, sr):
+    window_length = int(WINDOW_SIZE * sr)
+    hop_length = int(HOP_SIZE * sr)
+    
+    windows = []
+    
+    for start in range(0, len(signal) - window_length + 1, hop_length):
+        end = start + window_length
+        windows.append(signal[start:end])
+    
+    return windows
+
+# ==============================
+# PREDICTION
+# ==============================
+def predict_audio(file_path):
+    try:
+        signal, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+        
+        windows = split_windows(signal, sr)
+        
+        # Handle very short audio
+        if len(windows) == 0:
+            print("Audio too short → padding applied")
+            pad_length = int(WINDOW_SIZE * sr)
+            signal = np.pad(signal, (0, pad_length - len(signal)))
+            windows = [signal]
+        
+        predictions = []
+        
+        for window in windows:
+            features = extract_features(window, sr)
+            features = np.expand_dims(features, axis=0)
+            
+            pred = model.predict(features, verbose=0)
+            predicted_class = np.argmax(pred)
+            
+            predictions.append(predicted_class)
+        
+        # Majority voting
+        final_class = Counter(predictions).most_common(1)[0][0]
+        
+        print("\nWindow Predictions:", [LABEL_MAP[p] for p in predictions])
+        print("Final Prediction:", LABEL_MAP[final_class])
+    
+    except Exception as e:
+        print("Error:", e)
+
+# ==============================
+# USER INPUT
+# ==============================
+file_path = input("\nEnter path of audio file: ")
+predict_audio(file_path)

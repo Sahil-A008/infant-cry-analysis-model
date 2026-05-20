@@ -1,0 +1,227 @@
+# ============================================================
+# INFANT CRY CLASSIFICATION USING SAVED CNN MODEL
+# ============================================================
+#
+# FEATURES:
+# 1. Loads saved CNN model (basesavcnn.h5)
+# 2. Loads saved accuracy values
+# 3. Prints training, validation and test accuracies
+# 4. Accepts:
+#       - Audio WAV file
+#       - Spectrogram image
+# 5. Converts audio -> spectrogram automatically
+# 6. Resizes image to 224x224
+# 7. Predicts:
+#       - Pain
+#       - Hunger
+#       - Discomfort
+#
+# ============================================================
+
+import os
+import json
+import numpy as np
+import tensorflow as tf
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
+from PIL import Image
+
+# ============================================================
+# LOAD SAVED MODEL
+# ============================================================
+
+model = load_model("basesavcnn.h5")
+
+print("\n========================================")
+print("Saved CNN Model Loaded Successfully")
+print("========================================")
+
+# ============================================================
+# LOAD SAVED ACCURACY VALUES
+# ============================================================
+
+with open("model_results.json", "r") as file:
+    results = json.load(file)
+
+print("\n============= MODEL ACCURACIES =============")
+
+print(f"Training Accuracy   : {results['Training Accuracy'] * 100:.2f}%")
+print(f"Validation Accuracy : {results['Validation Accuracy'] * 100:.2f}%")
+print(f"Test Accuracy       : {results['Test Accuracy'] * 100:.2f}%")
+
+print("============================================\n")
+
+# ============================================================
+# CLASS LABELS
+# ============================================================
+
+class_names = ['discomfort', 'hunger', 'pain']
+
+# ============================================================
+# FUNCTION : CREATE SPECTROGRAM FROM AUDIO
+# ============================================================
+
+def audio_to_spectrogram(audio_path):
+
+    # Load audio
+    signal, sr = librosa.load(audio_path, sr=None)
+
+    # Create Mel Spectrogram
+    mel_spectrogram = librosa.feature.melspectrogram(
+        y=signal,
+        sr=sr,
+        n_mels=128
+    )
+
+    # Convert to decibel scale
+    mel_spectrogram_db = librosa.power_to_db(
+        mel_spectrogram,
+        ref=np.max
+    )
+
+    # Save temporary spectrogram image
+    temp_image = "temp_spectrogram.png"
+
+    plt.figure(figsize=(4, 4))
+
+    librosa.display.specshow(
+        mel_spectrogram_db,
+        sr=sr,
+        x_axis='time',
+        y_axis='mel'
+    )
+
+    plt.axis('off')
+
+    plt.savefig(
+        temp_image,
+        bbox_inches='tight',
+        pad_inches=0
+    )
+
+    plt.close()
+
+    return temp_image
+
+# ============================================================
+# FUNCTION : PREPROCESS IMAGE
+# ============================================================
+
+def preprocess_image(img_path):
+
+    img = Image.open(img_path).convert('RGB')
+
+    # Resize to 224x224
+    img = img.resize((224, 224))
+
+    img_array = image.img_to_array(img)
+
+    # Normalize
+    img_array = img_array / 255.0
+
+    # Expand dimensions
+    img_array = np.expand_dims(img_array, axis=0)
+
+    return img_array
+
+# ============================================================
+# ASK INPUT FILE
+# ============================================================
+
+input_path = input(
+    "Enter audio (.wav) or spectrogram image path: "
+)
+
+# ============================================================
+# CHECK FILE TYPE
+# ============================================================
+
+audio_extensions = ['.wav', '.mp3']
+image_extensions = ['.png', '.jpg', '.jpeg']
+
+file_extension = os.path.splitext(input_path)[1].lower()
+
+# ============================================================
+# IF AUDIO FILE
+# ============================================================
+
+if file_extension in audio_extensions:
+
+    print("\nAudio file detected")
+    print("Generating spectrogram...")
+
+    spectrogram_path = audio_to_spectrogram(input_path)
+
+    processed_image = preprocess_image(spectrogram_path)
+
+# ============================================================
+# IF IMAGE FILE
+# ============================================================
+
+elif file_extension in image_extensions:
+
+    print("\nSpectrogram image detected")
+
+    processed_image = preprocess_image(input_path)
+
+# ============================================================
+# INVALID FILE
+# ============================================================
+
+else:
+
+    print("\nUnsupported file type")
+    exit()
+
+# ============================================================
+# PREDICTION
+# ============================================================
+
+prediction = model.predict(processed_image)
+
+predicted_index = np.argmax(prediction)
+
+predicted_class = class_names[predicted_index]
+
+confidence = np.max(prediction) * 100
+
+# ============================================================
+# OUTPUT RESULT
+# ============================================================
+
+print("\n===================================")
+print("INFANT CRY ANALYSIS RESULT")
+print("===================================")
+
+print(f"Predicted Class : {predicted_class.upper()}")
+print(f"Confidence      : {confidence:.2f}%")
+
+print("===================================\n")
+
+# ============================================================
+# SHOW PROBABILITIES
+# ============================================================
+
+print("Class Probabilities:\n")
+
+for i, class_name in enumerate(class_names):
+
+    print(f"{class_name.capitalize()} : {prediction[0][i] * 100:.2f}%")
+
+# ============================================================
+# REMOVE TEMP FILE
+# ============================================================
+
+if os.path.exists("temp_spectrogram.png"):
+
+    os.remove("temp_spectrogram.png")
+
+# ============================================================
+# END
+# ============================================================
+
+print("\nClassification Completed Successfully")

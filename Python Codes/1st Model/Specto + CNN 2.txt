@@ -1,0 +1,249 @@
+# ============================================================
+# INFANT CRY ANALYSIS USING CNN
+# ============================================================
+# This code:
+# 1. Loads spectrogram image dataset
+# 2. Trains CNN model
+# 3. Validates model
+# 4. Tests model
+# 5. Prints accuracies
+# 6. Saves trained model as "basesavcnn.h5"
+# 7. Saves accuracy values in a text file
+#
+# DATASET STRUCTURE:
+#
+# dataset/
+# ├── train/
+# │   ├── pain/
+# │   ├── hunger/
+# │   └── discomfort/
+# │
+# ├── validation/
+# │   ├── pain/
+# │   ├── hunger/
+# │   └── discomfort/
+# │
+# └── test/
+#     ├── pain/
+#     ├── hunger/
+#     └── discomfort/
+#
+# ============================================================
+
+import os
+import json
+import numpy as np
+import tensorflow as tf
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.optimizers import Adam
+
+# ============================================================
+# PATHS
+# ============================================================
+
+# CHANGE THIS PATH
+dataset_path = r"F:\\Project\\anew specto\\finalrepresentation\\mobilenet4 data set"
+
+train_path = os.path.join(dataset_path, "train")
+validation_path = os.path.join(dataset_path, "validation")
+test_path = os.path.join(dataset_path, "test")
+
+# ============================================================
+# PARAMETERS
+# ============================================================
+
+IMG_HEIGHT = 224
+IMG_WIDTH = 224
+BATCH_SIZE = 16
+EPOCHS = 20
+
+# ============================================================
+# IMAGE PREPROCESSING
+# ============================================================
+
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=10,
+    zoom_range=0.1,
+    horizontal_flip=False
+)
+
+validation_datagen = ImageDataGenerator(rescale=1./255)
+
+test_datagen = ImageDataGenerator(rescale=1./255)
+
+# ============================================================
+# DATA LOADING
+# ============================================================
+
+train_generator = train_datagen.flow_from_directory(
+    train_path,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical'
+)
+
+validation_generator = validation_datagen.flow_from_directory(
+    validation_path,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical'
+)
+
+test_generator = test_datagen.flow_from_directory(
+    test_path,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    shuffle=False
+)
+
+# ============================================================
+# CLASS LABELS
+# ============================================================
+
+print("\nClass Labels:")
+print(train_generator.class_indices)
+
+# ============================================================
+# CNN MODEL
+# ============================================================
+
+model = Sequential()
+
+# First Convolution Layer
+model.add(Conv2D(
+    32,
+    (3, 3),
+    activation='relu',
+    input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)
+))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+# Second Convolution Layer
+model.add(Conv2D(
+    64,
+    (3, 3),
+    activation='relu'
+))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+# Third Convolution Layer
+model.add(Conv2D(
+    128,
+    (3, 3),
+    activation='relu'
+))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+# Flatten Layer
+model.add(Flatten())
+
+# Fully Connected Layer
+model.add(Dense(128, activation='relu'))
+
+# Dropout Layer
+model.add(Dropout(0.5))
+
+# Output Layer
+model.add(Dense(3, activation='softmax'))
+
+# ============================================================
+# MODEL COMPILATION
+# ============================================================
+
+model.compile(
+    optimizer=Adam(learning_rate=0.0001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# ============================================================
+# MODEL SUMMARY
+# ============================================================
+
+model.summary()
+
+# ============================================================
+# TRAINING
+# ============================================================
+
+history = model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=EPOCHS
+)
+
+# ============================================================
+# TRAINING ACCURACY
+# ============================================================
+
+train_accuracy = history.history['accuracy'][-1]
+validation_accuracy = history.history['val_accuracy'][-1]
+
+print("\n===================================")
+print(f"Training Accuracy    : {train_accuracy * 100:.2f}%")
+print(f"Validation Accuracy  : {validation_accuracy * 100:.2f}%")
+print("===================================\n")
+
+# ============================================================
+# TESTING
+# ============================================================
+
+test_loss, test_accuracy = model.evaluate(test_generator)
+
+print("\n===================================")
+print(f"Test Accuracy : {test_accuracy * 100:.2f}%")
+print("===================================\n")
+
+# ============================================================
+# SAVE MODEL
+# ============================================================
+
+model.save("basesavcnn.h5")
+
+print("Model saved as: basesavcnn.h5")
+
+# ============================================================
+# SAVE MODEL PARAMETERS AND ACCURACIES
+# ============================================================
+
+results = {
+    "Training Accuracy": float(train_accuracy),
+    "Validation Accuracy": float(validation_accuracy),
+    "Test Accuracy": float(test_accuracy),
+    "Image Height": IMG_HEIGHT,
+    "Image Width": IMG_WIDTH,
+    "Batch Size": BATCH_SIZE,
+    "Epochs": EPOCHS,
+    "Classes": train_generator.class_indices
+}
+
+with open("model_results.json", "w") as file:
+    json.dump(results, file, indent=4)
+
+print("Accuracy values and parameters saved in:")
+print("model_results.json")
+
+# ============================================================
+# SAVE MODEL ARCHITECTURE SUMMARY
+# ============================================================
+
+with open("model_summary.txt", "w", encoding="utf-8") as f:
+    model.summary(print_fn=lambda x: f.write(x + '\n'))
+
+print("Model summary saved in:")
+print("model_summary.txt")
+
+# ============================================================
+# FINAL MESSAGE
+# ============================================================
+
+print("\nCNN Training Completed Successfully")
